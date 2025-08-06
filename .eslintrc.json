@@ -1,0 +1,80 @@
+// .eslintrc.json
+{
+  "root": true,
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "node": true,
+    "electron": true
+  },
+  "extends": [
+    "eslint:recommended",
+    "plugin:react/recommended",
+    "plugin:react-hooks/recommended",
+    "plugin:jsx-a11y/recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:import/recommended",
+    "plugin:import/typescript",
+    "plugin:prettier/recommended" // Make sure this is always the last one to override other configs
+  ],
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaFeatures": {
+      "jsx": true
+    },
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "project": "./tsconfig.json" // Important for type-aware rules in TypeScript
+  },
+  "settings": {
+    "react": {
+      "version": "detect" // Automatically detects the React version you're using
+    },
+    "import/resolver": {
+      "typescript": true,
+      "node": true
+    }
+  },
+  "rules": {
+    // --- General ESLint rules ---
+    "no-unused-vars": "off", // Handled by @typescript-eslint
+    "no-console": ["warn", { "allow": ["warn", "error"] }], // Allow console.warn/error, but warn on others
+
+    // --- TypeScript ESLint rules ---
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }], // Warn about unused variables, ignore those starting with _
+    "@typescript-eslint/explicit-module-boundary-types": "off", // Often too strict for React components; consider enabling if you want strict type declarations
+    "@typescript-eslint/no-explicit-any": "warn", // Warn about using 'any' type
+
+    // --- React ESLint rules ---
+    "react/react-in-jsx-scope": "off", // Not needed with React 17+ JSX Transform
+    "react/prop-types": "off", // Prop types are typically handled by TypeScript
+    "react/jsx-uses-react": "off", // Not needed with React 17+ JSX Transform
+    "react/display-name": "off" // Sometimes useful to turn off for anonymous functional components
+  },
+  // If you have different configurations for different files (e.g., main vs. renderer in Electron)
+  "overrides": [
+    {
+      "files": ["electron/**/*.js", "electron/**/*.ts"], // Target Electron main process files
+      "env": {
+        "browser": false, // Main process is not a browser env
+        "node": true,
+        "electron": true
+      },
+      "rules": {
+        // Specific rules for Electron main process if needed
+        // e.g., "no-restricted-globals": ["error", "window", "document"] // Prohibit browser globals
+      }
+    },
+    {
+      "files": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"], // Target React renderer process files
+      "env": {
+        "browser": true,
+        "node": false, // Renderer process is not a node env
+        "electron": true
+      },
+      "rules": {
+        // Specific rules for React renderer process if needed
+      }
+    }
+  ]
+}
