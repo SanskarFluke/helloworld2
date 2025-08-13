@@ -6,6 +6,9 @@ const VersivAutoConnect = () => {
   const [sysinfo, setSysinfo] = useState('');
   const [error, setError] = useState('');
 
+  const [sshUser, setSshUser] = useState('cwuser');
+  const [sshPassword, setSshPassword] = useState('fnet99');
+
   const handleScan = async () => {
     setStatus('Scanning interfaces...');
     setError('');
@@ -13,7 +16,10 @@ const VersivAutoConnect = () => {
     setSysinfo('');
 
     try {
-      const result = await window.electron.ipcRenderer.invoke('scan-versiv');
+      const result = await window.electron.ipcRenderer.invoke('scan-versiv', {
+        sshUser,
+        sshPassword
+      });
 
       if (result.error) {
         setStatus('Error');
@@ -32,6 +38,24 @@ const VersivAutoConnect = () => {
   return (
     <div style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
       <h2>Versiv Auto Connect</h2>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label>SSH Username: </label>
+        <input
+          type="text"
+          value={sshUser}
+          onChange={(e) => setSshUser(e.target.value)}
+        />
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label>SSH Password: </label>
+        <input
+          type="password"
+          value={sshPassword}
+          onChange={(e) => setSshPassword(e.target.value)}
+        />
+      </div>
 
       <button
         onClick={handleScan}
@@ -59,12 +83,11 @@ const VersivAutoConnect = () => {
       )}
 
       {sysinfo && (
-  <div style={{ marginTop: '1rem', whiteSpace: 'pre-wrap', background: '#f7f7f7', padding: '1rem', borderRadius: '6px' }}>
-    <strong>Sysinfo Output:</strong>
-    <pre>{JSON.stringify(sysinfo, null, 2)}</pre>
-  </div>
-)}
-
+        <div style={{ marginTop: '1rem', whiteSpace: 'pre-wrap', background: '#f7f7f7', padding: '1rem', borderRadius: '6px' }}>
+          <strong>Sysinfo Output:</strong>
+          <pre>{JSON.stringify(sysinfo, null, 2)}</pre>
+        </div>
+      )}
 
       {error && (
         <div style={{ marginTop: '1rem', color: 'red', whiteSpace: 'pre-wrap' }}>

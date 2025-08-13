@@ -4,13 +4,14 @@
   "version": "0.0.0",
   "main": "electron/main.cjs",
   "scripts": {
+    "copy-preload": "cp preload.js dist/",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "electron": "cross-env NODE_ENV=development electron .",
     "electron:build": "vite build && cross-env NODE_ENV=production electron .",
-    "dist": "vite build && electron-builder",
+    "dist": "vite build && npm run copy-preload && electron-builder",
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
@@ -60,11 +61,15 @@
     "appId": "com.example.helloworld2",
     "productName": "HelloWorld2",
     "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "node_modules/**/*",
-      "package.json"
-    ],
+        "dist/**/*",
+        {
+          "from": "dist/preload.js",
+          "to": "preload.js"
+        },
+        "electron/**/*",
+        "node_modules/**/*",
+        "package.json"
+      ],
     "mac": {
       "target": [
         "dmg"

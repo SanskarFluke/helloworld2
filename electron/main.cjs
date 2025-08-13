@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { exec, execSync } = require('child_process');
+const { exec, execSync, spawn } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
 const os = require('os');
 const fs = require('fs');
@@ -14,13 +14,14 @@ const net = require('net');
 const sshKeyPath = path.join(os.homedir(), '.electron_ssh/id_rsa');
 const SSH_KEY_PATH = path.join(os.homedir(), '.ssh', 'id_rsa');
 
+const ADB_PATH = isDev ? 'adb' : '/usr/local/bin/adb';
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload.js'),
+      preload: path.join(__dirname, '..', 'dist', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -52,7 +53,7 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('get-android-storage', async () => {
   return new Promise((resolve, reject) => {
-    exec('adb shell df /storage/emulated', (err, stdout) => {
+    exec(`${ADB_PATH} shell df /storage/emulated`, (err, stdout) => {
       if (err) {
         return reject('ADB Error: ' + err.message);
       }
@@ -221,29 +222,57 @@ function getInterfaces() {
   return interfaces;
 }
 
-// Run arp-scan
+//Run arp-scan
 function arpScan(interfaceName) {
-  try {
-    console.log(`[INFO] Running arp-scan on ${interfaceName}`);
-    const output = execSync(`arp-scan --interface=${interfaceName} 169.254.0.0/16`).toString();
-    const lines = output.split('\n');
-    const ips = lines
-      .filter(line => line.includes('169.254.'))
-      .map(line => line.split('\t')[0]);
+  return new Promise((resolve, reject) => {
+    const scan = spawn('arp-scan', [`--interface=${interfaceName}`, '169.254.0.0/16']);
+    const ips = [];
 
-    console.log(`[INFO] Found IPs on ${interfaceName}:`, ips);
-    return ips;
-  } catch (err) {
-    console.warn(`[WARN] arp-scan failed on ${interfaceName}`);
-    return [];
-  }
+    scan.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const match = line.match(/^(169\.254\.\d+\.\d+)\s+([0-9A-Fa-f:]{17})/);
+        if (match) {
+          const ip = match[1];
+          const mac = match[2];
+          ips.push({ ip, mac });
+        }
+      }
+    });
+
+    scan.stderr.on('data', (data) => {
+      console.warn(`[arp-scan stderr] ${data}`);
+    });
+
+    scan.on('error', (err) => {
+      console.error('[ERROR] Failed to run arp-scan:', err);
+      reject(err);
+    });
+
+    scan.on('close', (code) => {
+      resolve(ips);
+    });
+  });
 }
 
+
 //Ping an IP
-function pingIP(ip) {
+function getLocalIPForInterface(iface) {
+  const ifconfigOutput = execSync(`ifconfig ${iface}`).toString();
+  const match = ifconfigOutput.match(/inet (169\.254\.\d+\.\d+)/);
+  return match?.[1] || null;
+}
+
+function pingIP(ip, iface) {
   try {
-    execSync(`ping -c 1 -W 1 ${ip}`);
-    console.log(`[INFO] Ping successful: ${ip}`);
+    const localIP = getLocalIPForInterface(iface);
+    if (!localIP) {
+      console.warn(`[WARN] Could not find local IP for interface ${iface}`);
+      return false;
+    }
+
+    execSync(`ping -c 1 -W 1 -S ${localIP} ${ip}`);
+    console.log(`[INFO] Ping successful: ${ip} (from ${localIP})`);
     return true;
   } catch {
     console.warn(`[WARN] Ping failed: ${ip}`);
@@ -275,20 +304,22 @@ function isSSHOpen(ip, port = 22, timeout = 1000) {
 }
 
 // Try SSH with key first, then password
-function trySSH(ip) {
+function trySSH(ip, sshUser, sshPassword) {
   return new Promise((resolve, reject) => {
     const CMD_WRAPPED = `sh -l -c "${SYSINFO_CMD}"`;
+
     const commonOptions = [
       '-o HostKeyAlgorithms=+ssh-rsa',
       '-o PubkeyAcceptedAlgorithms=+ssh-rsa',
       '-o StrictHostKeyChecking=no',
       '-o UserKnownHostsFile=/dev/null',
       '-o ConnectTimeout=3',
-      '-v' // verbose SSH debug
+      '-o PasswordAuthentication=no',
+      '-v'
     ].join(' ');
 
     console.log(`[INFO] Trying SSH key authentication to ${ip}...`);
-    const sshKeyCmd = `ssh ${commonOptions} -i "${KEY_PATH}" ${SSH_USER}@${ip} '${CMD_WRAPPED}'`;
+    const sshKeyCmd = `ssh ${commonOptions} -i "${KEY_PATH}" ${sshUser}@${ip} '${CMD_WRAPPED}'`;
 
     try {
       const output = execSync(sshKeyCmd, { stdio: 'pipe' }).toString();
@@ -304,7 +335,7 @@ function trySSH(ip) {
         } else {
           console.warn('[WARN] SSH key output is valid JSON but missing serial_number');
         }
-      } catch (jsonErr) {
+      } catch {
         console.warn('[WARN] SSH key output is not valid JSON.');
       }
     } catch (err) {
@@ -314,7 +345,16 @@ function trySSH(ip) {
 
     // ---- Fallback to Password Auth ---- //
     console.log('[INFO] Falling back to SSH password authentication...');
-    const sshPassCmd = `sshpass -p ${SSH_PASSWORD} ssh ${commonOptions.replace('-o ConnectTimeout=3', '-o ConnectTimeout=5')} ${SSH_USER}@${ip} '${CMD_WRAPPED}'`;
+    const sshPassCmd = `sshpass -p '${sshPassword}' ssh \
+      -o HostKeyAlgorithms=+ssh-rsa \
+      -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o PreferredAuthentications=password \
+      -T ${sshUser}@${ip} \
+      'sh -l -c "${SYSINFO_CMD}"'`;
+
+    console.log(`[INFO] Running sshpass command: ${sshPassCmd}`);
 
     exec(sshPassCmd, { timeout: 8000 }, (error, stdout, stderr) => {
       if (error) {
@@ -331,18 +371,17 @@ function trySSH(ip) {
         const model = parsed?.instruments?.[0]?.model;
         const swVersions = parsed?.instruments?.[0]?.components?.sw ?? [];
 
-
         if (serial) {
           console.log('[INFO] SSH password authentication successful');
-          console.log('serial_number: '+serial);
-          console.log('model: '+ model);
-          console.log('sw: '+swVersions);
+          console.log('serial_number:', serial);
+          console.log('model:', model);
+          console.log('sw:', swVersions);
           return resolve(parsed);
         } else {
           console.warn('[WARN] SSH password output is valid JSON but missing serial_number');
           return reject(new Error('serial_number missing from SSH output'));
         }
-      } catch (parseErr) {
+      } catch {
         console.warn('[WARN] SSH password output is not valid JSON.');
         return reject(new Error('SSH output not in JSON format'));
       }
@@ -352,8 +391,31 @@ function trySSH(ip) {
 
 
 
+function refreshARPAndSSH(ip, mac, iface) {
+  try {
+    console.log(`[INFO] Refreshing ARP & SSH for ${ip} (MAC: ${mac}, iface: ${iface})`);
+
+    // Delete old ARP entry
+    execSync(`sudo arp -d ${ip}`);
+    console.log(`[INFO] Deleted old ARP entry for ${ip}`);
+
+    // Remove from known_hosts
+    execSync(`ssh-keygen -R ${ip}`);
+    console.log(`[INFO] Removed SSH known_hosts entry for ${ip}`);
+
+    // Set static ARP entry
+    execSync(`sudo arp -S ${ip} ${mac} -i ${iface}`);
+    console.log(`[INFO] Set static ARP entry for ${ip}`);
+  } catch (err) {
+    console.warn(`[WARN] Failed to refresh ARP/SSH for ${ip}:`, err.message);
+  }
+}
+
+
+
+
 // ---- IPC HANDLER ----
-ipcMain.handle('scan-versiv', async () => {
+ipcMain.handle('scan-versiv', async (_event, { sshUser, sshPassword }) => {
   console.log('[INFO] Starting Versiv device scan...');
   try {
     generateSSHKeyIfNotExists();
@@ -362,15 +424,17 @@ ipcMain.handle('scan-versiv', async () => {
     if (!interfaces.length) throw new Error('No 169.254.x.x interfaces found.');
 
     for (const iface of interfaces) {
-      const ips = arpScan(iface);
+      const ips = await arpScan(iface);
       if (!ips.length) continue;
 
-      for (const ip of ips) {
-        if (!pingIP(ip)) continue;
+      for (const { ip, mac } of ips) {
+        refreshARPAndSSH(ip, mac, iface);
+
+        if (!pingIP(ip, iface)) continue;
         if (!await isSSHOpen(ip)) continue;
 
         try {
-          const sysinfo = await trySSH(ip);
+          const sysinfo = await trySSH(ip, sshUser, sshPassword);
           console.log(`[SUCCESS] Connected to Versiv at ${ip}`);
           return { deviceIP: ip, sysinfo };
         } catch (err) {
