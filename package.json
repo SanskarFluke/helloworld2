@@ -31,6 +31,7 @@
     "react-router-dom": "^7.6.3",
     "react-select-country-list": "^2.2.3",
     "sqlite3": "^5.1.7",
+    "sudo-prompt": "^9.2.1",
     "usb": "^2.16.0"
   },
   "devDependencies": {
@@ -58,23 +59,30 @@
     "vite": "^7.0.4"
   },
   "build": {
-    "appId": "com.example.helloworld2",
-    "productName": "HelloWorld2",
-    "files": [
-        "dist/**/*",
-        {
-          "from": "dist/preload.js",
-          "to": "preload.js"
-        },
-        "electron/**/*",
-        "node_modules/**/*",
-        "package.json"
-      ],
-    "mac": {
-      "target": [
-        "dmg"
-      ],
-      "category": "public.app-category.utilities"
-    }
+  "appId": "com.example.helloworld2",
+  "productName": "HelloWorld2",
+  "files": [
+    "dist/**/*",
+    {
+      "from": "dist/preload.js",
+      "to": "preload.js"
+    },
+    "electron/**/*",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "public.app-category.utilities"
+  },
+  "dmg": {
+    "format": "ULFO"
   }
+}
+
 }

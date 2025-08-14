@@ -8,6 +8,8 @@ const usb = require('usb');
 const { NodeSSH } = require('node-ssh');
 const ssh = new NodeSSH();
 const net = require('net');
+const sudo = require('sudo-prompt');
+
 
 
 
@@ -183,11 +185,10 @@ ipcMain.handle('scan-usb-devices', async () => {
 
 
 // ---- CONFIG ----
-const SSH_USER = 'cwuser';
-const SSH_PASSWORD = 'fnet99';
 const SYSINFO_CMD = 'sysinfo';
 const KEY_PATH = path.join(os.homedir(), '.ssh/id_rsa');
 const PUB_KEY_PATH = KEY_PATH + '.pub';
+const options = { name: 'Versiv Auto Connect' };
 
 // ---- UTILITY FUNCTIONS ----
 
@@ -222,10 +223,11 @@ function getInterfaces() {
   return interfaces;
 }
 
+
 //Run arp-scan
 function arpScan(interfaceName) {
   return new Promise((resolve, reject) => {
-    const scan = spawn('arp-scan', [`--interface=${interfaceName}`, '169.254.0.0/16']);
+    const scan = spawn(getArpScanPath(), [`--interface=${interfaceName}`, '169.254.0.0/16']);
     const ips = [];
 
     scan.stdout.on('data', (data) => {
@@ -250,6 +252,63 @@ function arpScan(interfaceName) {
     });
 
     scan.on('close', (code) => {
+      resolve(ips);
+    });
+  });
+}
+
+
+function getArpScanPath() {
+  const possiblePaths = [
+    '/usr/local/bin/arp-scan', // Intel mac
+    '/opt/homebrew/bin/arp-scan' // Apple Silicon
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  throw new Error('arp-scan not found. Please install it with: brew install arp-scan');
+}
+
+function arpScanAndRefresh(interfaceName) {
+  return new Promise((resolve, reject) => {
+    const arpScanPath = getArpScanPath();
+
+    // Run arp-scan and refresh ARP/SSH entries all in one sudo call
+    const script = `
+      set -e
+      echo "[INFO] Running ARP scan on ${interfaceName}..."
+      ${arpScanPath} --interface=${interfaceName} 169.254.0.0/16 | tee /tmp/versiv_scan.txt
+
+      while read -r ip mac _; do
+        if [[ $ip =~ ^169\\.254\\. ]]; then
+          echo "[INFO] Refreshing ARP/SSH for $ip ($mac)..."
+          arp -d $ip || true
+          ssh-keygen -R $ip || true
+          arp -S $ip $mac -i ${interfaceName}
+        fi
+      done < /tmp/versiv_scan.txt
+    `;
+
+    sudo.exec(script, options, (err, stdout, stderr) => {
+      if (err) {
+        console.error('[ERROR] sudo-prompt failed:', err);
+        return reject(err);
+      }
+
+      if (stderr) console.warn('[WARN] sudo stderr:', stderr);
+
+      // Parse results back from /tmp/versiv_scan.txt
+      const scanOutput = execSync('cat /tmp/versiv_scan.txt').toString();
+      const ips = [];
+      scanOutput.split('\n').forEach(line => {
+        const match = line.match(/^(169\.254\.\d+\.\d+)\s+([0-9A-Fa-f:]{17})/);
+        if (match) {
+          ips.push({ ip: match[1], mac: match[2] });
+        }
+      });
+
       resolve(ips);
     });
   });
@@ -424,15 +483,12 @@ ipcMain.handle('scan-versiv', async (_event, { sshUser, sshPassword }) => {
     if (!interfaces.length) throw new Error('No 169.254.x.x interfaces found.');
 
     for (const iface of interfaces) {
-      const ips = await arpScan(iface);
+      const ips = await arpScanAndRefresh(iface);
       if (!ips.length) continue;
 
       for (const { ip, mac } of ips) {
-        refreshARPAndSSH(ip, mac, iface);
-
         if (!pingIP(ip, iface)) continue;
         if (!await isSSHOpen(ip)) continue;
-
         try {
           const sysinfo = await trySSH(ip, sshUser, sshPassword);
           console.log(`[SUCCESS] Connected to Versiv at ${ip}`);
