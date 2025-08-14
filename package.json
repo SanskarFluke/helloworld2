@@ -58,7 +58,7 @@
     "typescript-eslint": "^8.36.0",
     "vite": "^7.0.4"
   },
-  "build": {
+"build": {
   "appId": "com.example.helloworld2",
   "productName": "HelloWorld2",
   "files": [
@@ -81,7 +81,24 @@
     "category": "public.app-category.utilities"
   },
   "dmg": {
-    "format": "ULFO"
+    "format": "UDZO",
+    "background": null,
+    "window": {
+      "width": 540,
+      "height": 380
+    },
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ]
   }
 }
 
